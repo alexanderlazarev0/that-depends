@@ -271,3 +271,48 @@ class MyContextResouce(
         except LookupError as e:
             msg = "No context set!"
             raise RuntimeError(msg) from e
+
+
+class my_container_context(AbstractContextManager[None], AbstractAsyncContextManager[None]):  # noqa: N801
+    ___slots__ = ("_providers", "_context_stack")
+
+    def __init__(self, providers: list[MyContextResouce[typing.Any]] | None = None) -> None:
+        self._providers = providers or []
+        self._context_stack: contextlib.AsyncExitStack | contextlib.ExitStack | None = None
+
+    def __enter__(self) -> None:
+        self._context_stack = contextlib.ExitStack()
+        for provider in self._providers:
+            self._context_stack.enter_context(provider.sync_context())
+
+    async def __aenter__(self) -> None:
+        self._context_stack = contextlib.AsyncExitStack()
+        for provider in self._providers:
+            await self._context_stack.enter_async_context(provider.async_context())
+
+    def _has_async_exit_stack(
+        self,
+        _: contextlib.AsyncExitStack | contextlib.ExitStack | None,
+    ) -> typing.TypeGuard[contextlib.AsyncExitStack]:
+        return isinstance(_, contextlib.AsyncExitStack)
+
+    def _has_sync_exit_stack(
+        self, _: contextlib.AsyncExitStack | contextlib.ExitStack | None
+    ) -> typing.TypeGuard[contextlib.ExitStack]:
+        return isinstance(_, contextlib.ExitStack)
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        if self._has_sync_exit_stack(self._context_stack):
+            self._context_stack.close()
+        msg = "__enter__  was not called!"
+        raise RuntimeError(msg)
+
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        if self._has_async_exit_stack(self._context_stack):
+            await self._context_stack.aclose()
+        msg = "__aenter was not called!"
+        raise RuntimeError(msg)
