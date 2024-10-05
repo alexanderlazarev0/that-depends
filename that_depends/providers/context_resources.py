@@ -12,6 +12,10 @@ from types import TracebackType
 from that_depends.providers.base import AbstractResource, ResourceContext
 
 
+if typing.TYPE_CHECKING:
+    from that_depends.container import BaseContainer
+
+
 logger: typing.Final = logging.getLogger(__name__)
 T_co = typing.TypeVar("T_co", covariant=True)
 P = typing.ParamSpec("P")
@@ -273,11 +277,32 @@ class MyContextResouce(
             raise RuntimeError(msg) from e
 
 
-class my_container_context(AbstractContextManager[None], AbstractAsyncContextManager[None]):  # noqa: N801
-    ___slots__ = ("_providers", "_context_stack")
+ContainerType = typing.TypeVar("ContainerType", bound="BaseContainer")
 
-    def __init__(self, providers: list[MyContextResouce[typing.Any]] | None = None) -> None:
-        self._providers = providers or []
+
+class my_container_context(AbstractContextManager[None], AbstractAsyncContextManager[None]):  # noqa: N801
+    ___slots__ = ("_providers", "_context_stack", "_containers")
+
+    def __init__(
+        self, providers: list[MyContextResouce[typing.Any]] | None = None, containers: list[ContainerType] | None = None
+    ) -> None:
+        self._providers: set[MyContextResouce[typing.Any]] = set()
+        if providers:
+            for provider in providers:
+                if isinstance(provider, MyContextResouce):
+                    self._providers.add(provider)
+                else:
+                    msg = "Provider is not a ContextResource"
+                    raise TypeError(msg)
+        if containers:
+            for container in containers:
+                for container_provider in container.get_providers().values():
+                    if isinstance(container_provider, MyContextResouce):
+                        self._providers.add(container_provider)
+                    else:
+                        msg = "Provider is not a ContextResource"
+                        raise TypeError(msg)
+
         self._context_stack: contextlib.AsyncExitStack | contextlib.ExitStack | None = None
 
     def __enter__(self) -> None:
@@ -306,6 +331,7 @@ class my_container_context(AbstractContextManager[None], AbstractAsyncContextMan
     ) -> None:
         if self._has_sync_exit_stack(self._context_stack):
             self._context_stack.close()
+            return
         msg = "__enter__  was not called!"
         raise RuntimeError(msg)
 
@@ -314,5 +340,6 @@ class my_container_context(AbstractContextManager[None], AbstractAsyncContextMan
     ) -> None:
         if self._has_async_exit_stack(self._context_stack):
             await self._context_stack.aclose()
+            return
         msg = "__aenter was not called!"
         raise RuntimeError(msg)
