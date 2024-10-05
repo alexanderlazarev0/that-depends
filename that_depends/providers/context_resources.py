@@ -1,3 +1,4 @@
+import contextlib
 import inspect
 import logging
 import typing
@@ -176,3 +177,97 @@ class AsyncContextResource(ContextResource[T_co]):
     ) -> None:
         warnings.warn("AsyncContextResource is deprecated, use ContextResource instead", RuntimeWarning, stacklevel=1)
         super().__init__(creator, *args, **kwargs)
+
+
+class MyContextResouce(
+    AbstractResource[T_co],
+    AbstractAsyncContextManager[ResourceContext[T_co]],
+    AbstractContextManager[ResourceContext[T_co]],
+):
+    __slots__ = (
+        "_is_async",
+        "_creator",
+        "_args",
+        "_kwargs",
+        "_override",
+        "_internal_name",
+        "_context",
+        "_token",
+    )
+
+    def __init__(
+        self,
+        creator: typing.Callable[P, typing.Iterator[T_co] | typing.AsyncIterator[T_co]],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> None:
+        super().__init__(creator, *args, **kwargs)
+        self._context: ContextVar[ResourceContext[T_co]] = ContextVar(f"{self._creator.__name__}-context")
+        self._token: Token[ResourceContext[T_co]] | None = None
+
+    def __enter__(self) -> ResourceContext[T_co]:
+        if self._is_creator_async(self._creator):
+            msg = "You must enter async context for async creators."
+            raise RuntimeError(msg)
+        return self._enter()
+
+    async def __aenter__(self) -> ResourceContext[T_co]:
+        return self._enter()
+
+    def _enter(self) -> ResourceContext[T_co]:
+        self._token = self._context.set(ResourceContext(is_async=self._is_creator_async(self._creator)))
+        return self._context.get()
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        if not self._token:
+            msg = "Context is not set, call ``__enter__`` first"
+            raise RuntimeError(msg)
+
+        try:
+            context_item = self._context.get()
+            context_item.sync_tear_down()
+
+        finally:
+            self._context.reset(self._token)
+
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        if self._token is None:
+            msg = "Context is not set, call ``__aenter__`` first"
+            raise RuntimeError(msg)
+
+        try:
+            context_item = self._context.get()
+            if context_item.is_context_stack_async(context_item.context_stack):
+                await context_item.tear_down()
+            else:
+                context_item.sync_tear_down()
+        finally:
+            self._context.reset(self._token)
+
+    @contextlib.contextmanager
+    def sync_context(self) -> typing.Iterator[ResourceContext[T_co]]:
+        if self._is_creator_async(self._creator):
+            msg = "Please use async context instead."
+            raise RuntimeError(msg)
+        token = self._token
+        with self as val:
+            yield val
+        self._token = token
+
+    @contextlib.asynccontextmanager
+    async def async_context(self) -> typing.AsyncIterator[ResourceContext[T_co]]:
+        token = self._token
+        async with self as val:
+            yield val
+        self._token = token
+
+    def _fetch_context(self) -> ResourceContext[T_co]:
+        try:
+            return self._context.get()
+        except LookupError as e:
+            msg = "No context set!"
+            raise RuntimeError(msg) from e
