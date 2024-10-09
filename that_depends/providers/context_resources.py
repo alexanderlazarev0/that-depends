@@ -2,13 +2,14 @@ import contextlib
 import inspect
 import logging
 import typing
-from typing_extensions import TypeIs
 import uuid
 import warnings
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from contextvars import ContextVar, Token
 from functools import wraps
 from types import TracebackType
+
+from typing_extensions import TypeIs
 
 from that_depends.providers.base import AbstractResource, ResourceContext
 
@@ -309,7 +310,7 @@ class my_container_context(AbstractContextManager[ContextType], AbstractAsyncCon
         if preserve_globals and initial_context:
             self._initial_context = {**_get_container_context(), **initial_context}
         else:
-            self._initial_context: ContextType = _get_container_context() if preserve_globals else initial_context or {} # type: ignore[no-redef]
+            self._initial_context: ContextType = _get_container_context() if preserve_globals else initial_context or {}  # type: ignore[no-redef]
         self._context_token: Token[ContextType] | None = None
         self._providers: set[MyContextResouce[typing.Any]] = set()
         if providers:
@@ -327,7 +328,7 @@ class my_container_context(AbstractContextManager[ContextType], AbstractAsyncCon
         if not containers and not providers:
             # we need to reset all providers.
             msg = "Requires container registration to be implemented first."
-            raise NotImplementedError(msg)
+            # raise NotImplementedError(msg)
 
         self._context_stack: contextlib.AsyncExitStack | contextlib.ExitStack | None = None
 
@@ -346,8 +347,8 @@ class my_container_context(AbstractContextManager[ContextType], AbstractAsyncCon
     def _enter_globals(self) -> ContextType:
         self._context_token = _CONTAINER_CONTEXT.set(self._initial_context)
         return _CONTAINER_CONTEXT.get()
-    
-    def _is_context_token(self, _: Token[ContextType] | None ) -> TypeIs[Token[ContextType]]:
+
+    def _is_context_token(self, _: Token[ContextType] | None) -> TypeIs[Token[ContextType]]:
         return isinstance(_, Token)
 
     def _exit_globals(self) -> None:
