@@ -269,6 +269,21 @@ class MyContextResouce(
             yield val
         self._token = token
 
+    def context(
+        self,
+    ) -> (
+        contextlib._GeneratorContextManager[ResourceContext[T_co]]
+        | contextlib._AsyncGeneratorContextManager[ResourceContext[T_co]]
+    ):
+        """Create a new context manager for the resource, the context manager will be async if the resource is async.
+
+        :return: A context manager for the resource.
+        :rtype: typing.ContextManager[ResourceContext[T_co]] | typing.AsyncContextManager[ResourceContext[T_co]]
+        """
+        if self._is_creator_async(self._creator):
+            return self.async_context()
+        return self.sync_context()
+
     def _fetch_context(self) -> ResourceContext[T_co]:
         try:
             return self._context.get()
@@ -299,9 +314,6 @@ class my_container_context(AbstractContextManager[None], AbstractAsyncContextMan
                 for container_provider in container.get_providers().values():
                     if isinstance(container_provider, MyContextResouce):
                         self._providers.add(container_provider)
-                    else:
-                        msg = "Provider is not a ContextResource"
-                        raise TypeError(msg)
 
         self._context_stack: contextlib.AsyncExitStack | contextlib.ExitStack | None = None
 
@@ -343,3 +355,20 @@ class my_container_context(AbstractContextManager[None], AbstractAsyncContextMan
             return
         msg = "__aenter was not called!"
         raise RuntimeError(msg)
+
+    def __call__(self, func: typing.Callable[P, T_co]) -> typing.Callable[P, T_co]:
+        if inspect.iscoroutinefunction(func):
+
+            @wraps(func)
+            async def _async_inner(*args: P.args, **kwargs: P.kwargs) -> T_co:
+                async with my_container_context(providers=list(self._providers)):
+                    return await func(*args, **kwargs)  # type: ignore[no-any-return]
+
+            return typing.cast(typing.Callable[P, T_co], _async_inner)
+
+        @wraps(func)
+        def _sync_inner(*args: P.args, **kwargs: P.kwargs) -> T_co:
+            with my_container_context(providers=list(self._providers)):
+                return func(*args, **kwargs)
+
+        return _sync_inner
