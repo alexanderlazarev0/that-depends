@@ -2,6 +2,7 @@ import contextlib
 import inspect
 import logging
 import typing
+from typing_extensions import TypeIs
 import uuid
 import warnings
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
@@ -295,12 +296,21 @@ class MyContextResouce(
 ContainerType = typing.TypeVar("ContainerType", bound="BaseContainer")
 
 
-class my_container_context(AbstractContextManager[None], AbstractAsyncContextManager[None]):  # noqa: N801
-    ___slots__ = ("_providers", "_context_stack", "_containers")
+class my_container_context(AbstractContextManager[ContextType], AbstractAsyncContextManager[ContextType]):  # noqa: N801
+    ___slots__ = ("_providers", "_context_stack", "_containers", "_initial_context", "_context_token")
 
     def __init__(
-        self, providers: list[MyContextResouce[typing.Any]] | None = None, containers: list[ContainerType] | None = None
+        self,
+        initial_context: ContextType | None = None,
+        providers: list[MyContextResouce[typing.Any]] | None = None,
+        containers: list[ContainerType] | None = None,
+        preserve_globals: bool = False,
     ) -> None:
+        if preserve_globals and initial_context:
+            self._initial_context = {**_get_container_context(), **initial_context}
+        else:
+            self._initial_context: ContextType = _get_container_context() if preserve_globals else initial_context or {} # type: ignore[no-redef]
+        self._context_token: Token[ContextType] | None = None
         self._providers: set[MyContextResouce[typing.Any]] = set()
         if providers:
             for provider in providers:
@@ -314,18 +324,37 @@ class my_container_context(AbstractContextManager[None], AbstractAsyncContextMan
                 for container_provider in container.get_providers().values():
                     if isinstance(container_provider, MyContextResouce):
                         self._providers.add(container_provider)
+        if not containers and not providers:
+            # we need to reset all providers.
+            msg = "Requires container registration to be implemented first."
+            raise NotImplementedError(msg)
 
         self._context_stack: contextlib.AsyncExitStack | contextlib.ExitStack | None = None
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> ContextType:
         self._context_stack = contextlib.ExitStack()
         for provider in self._providers:
             self._context_stack.enter_context(provider.sync_context())
+        return self._enter_globals()
 
-    async def __aenter__(self) -> None:
+    async def __aenter__(self) -> ContextType:
         self._context_stack = contextlib.AsyncExitStack()
         for provider in self._providers:
             await self._context_stack.enter_async_context(provider.async_context())
+        return self._enter_globals()
+
+    def _enter_globals(self) -> ContextType:
+        self._context_token = _CONTAINER_CONTEXT.set(self._initial_context)
+        return _CONTAINER_CONTEXT.get()
+    
+    def _is_context_token(self, _: Token[ContextType] | None ) -> TypeIs[Token[ContextType]]:
+        return isinstance(_, Token)
+
+    def _exit_globals(self) -> None:
+        if self._is_context_token(self._context_token):
+            return _CONTAINER_CONTEXT.reset(self._context_token)
+        msg = "No context token set for global vars, use __enter__ or __aenter__ first."
+        raise RuntimeError(msg)
 
     def _has_async_exit_stack(
         self,
@@ -341,20 +370,26 @@ class my_container_context(AbstractContextManager[None], AbstractAsyncContextMan
     def __exit__(
         self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
     ) -> None:
-        if self._has_sync_exit_stack(self._context_stack):
-            self._context_stack.close()
-            return
-        msg = "__enter__  was not called!"
-        raise RuntimeError(msg)
+        try:
+            if self._has_sync_exit_stack(self._context_stack):
+                self._context_stack.close()
+            else:
+                msg = "__enter__  was not called!"
+                raise RuntimeError(msg)
+        finally:
+            self._exit_globals()
 
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc_val: BaseException | None, traceback: TracebackType | None
     ) -> None:
-        if self._has_async_exit_stack(self._context_stack):
-            await self._context_stack.aclose()
-            return
-        msg = "__aenter was not called!"
-        raise RuntimeError(msg)
+        try:
+            if self._has_async_exit_stack(self._context_stack):
+                await self._context_stack.aclose()
+            else:
+                msg = "__aenter__ was not called!"
+                raise RuntimeError(msg)
+        finally:
+            self._exit_globals()
 
     def __call__(self, func: typing.Callable[P, T_co]) -> typing.Callable[P, T_co]:
         if inspect.iscoroutinefunction(func):
