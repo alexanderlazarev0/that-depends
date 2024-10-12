@@ -185,6 +185,9 @@ class AsyncContextResource(ContextResource[T_co]):
         super().__init__(creator, *args, **kwargs)
 
 
+T = typing.TypeVar("T")
+
+
 class MyContextResouce(
     AbstractResource[T_co],
     AbstractAsyncContextManager[ResourceContext[T_co]],
@@ -273,18 +276,15 @@ class MyContextResouce(
 
     def context(
         self,
-    ) -> (
-        contextlib._GeneratorContextManager[ResourceContext[T_co]]
-        | contextlib._AsyncGeneratorContextManager[ResourceContext[T_co]]
-    ):
+    ) -> typing.Callable[[typing.Callable[P, T]], typing.Callable[P, T]]:
         """Create a new context manager for the resource, the context manager will be async if the resource is async.
 
         :return: A context manager for the resource.
         :rtype: typing.ContextManager[ResourceContext[T_co]] | typing.AsyncContextManager[ResourceContext[T_co]]
         """
         if self._is_creator_async(self._creator):
-            return self.async_context()
-        return self.sync_context()
+            return typing.cast(typing.Callable[[typing.Callable[P, T]], typing.Callable[P, T]], self.async_context())
+        return typing.cast(typing.Callable[[typing.Callable[P, T]], typing.Callable[P, T]], self.sync_context())
 
     def _fetch_context(self) -> ResourceContext[T_co]:
         try:

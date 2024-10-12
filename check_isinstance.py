@@ -5,15 +5,15 @@ from that_depends import providers
 
 
 async def some_async_iterator() -> typing.AsyncIterator[str]:
-    yield str
+    yield "str"
 
 
-def some_sync_func() -> typing.Iterator[str]:
-    return str
+def some_sync_func() -> str:
+    return "str"
 
 
-correct_provider: providers.ContextResource = providers.ContextResource(some_async_iterator)
-incorrect_provider: providers.Factory = providers.Factory(some_sync_func)
+correct_provider: providers.ContextResource[str] = providers.ContextResource(some_async_iterator)
+incorrect_provider: providers.Factory[str] = providers.Factory(some_sync_func)
 
 
 if __name__ == "__main__":
@@ -28,7 +28,6 @@ if __name__ == "__main__":
     start_time = time.time()
     for _ in range(trials):
         isinstance(correct_provider, providers.ContextResource)
-    print(f"{time.time() - start_time}")
 
     start_time = time.time()
     for _ in range(trials):
